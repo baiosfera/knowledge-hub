@@ -1,0 +1,10 @@
+# Portable Zerops import template for dedicated baiosfera-knowledge project
+services:
+  - hostname: qdrant
+    type: qdrant:single@1.12
+    priority: 10
+  - hostname: knowledge
+    type: ubuntu/python@3.12
+    buildFromGit: https://github.com/baiosfera/knowledge-hub
+    enableSubdomainAccess: true
+    minContainers: 1

@@ -1,0 +1,29 @@
+[project]
+name = "baiosfera-knowledge-hub"
+version = "0.1.0"
+description = "Sovereign Knowledge Hub: NotebookLM $0 Extractor, Clean .md Corpus, DeepSeek Playbooks & Portable Qdrant MCP"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "fastmcp>=2.0.0",
+    "qdrant-client>=1.12.0",
+    "fastembed>=0.4.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.5.0",
+    "httpx>=0.27.0",
+    "pypdf>=5.0.0",
+    "python-docx>=1.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_default_fixture_loop_scope = "function"
