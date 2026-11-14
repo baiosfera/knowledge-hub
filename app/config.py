@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     knowledge_bearer_token: str = ""
     deepseek_api_key: str = ""
-    embedding_model: str = "intfloat/multilingual-e5-small"
+    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_dim: int = 384
     fastembed_cache_path: str = "/tmp/fastembed_cache"
 

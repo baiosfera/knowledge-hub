@@ -23,7 +23,13 @@ Hoy veremos posicionamiento
 
 
 def test_format_clean_markdown_zero_metadata_bloat():
-    md = format_clean_markdown("  # Clase 1: Fundamentos  ", "Primer párrafo.\n\n\n\nSegundo párrafo.")
+    body = (
+        "Primer párrafo.\n\n"
+        "https://lh3.googleusercontent.com/notebooklm/ABzcPv3kuz=w70-h60-v0\n\n\n"
+        "Segundo párrafo.\n\n"
+        "8a887473-a2f6-40ea-8085-73f2a2b47db4"
+    )
+    md = format_clean_markdown("  # Clase 1: Fundamentos  ", body)
     assert md == "# Clase 1: Fundamentos\n\nPrimer párrafo.\n\nSegundo párrafo.\n"
 
 

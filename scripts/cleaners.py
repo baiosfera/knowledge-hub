@@ -33,20 +33,34 @@ def clean_webvtt_text(raw: str) -> str:
     return "\n".join(lines).strip()
 
 
+_NLM_IMG_URL_RE = re.compile(r"^\s*https://lh3\.googleusercontent\.com/notebooklm/\S+\s*$", re.MULTILINE)
+_STANDALONE_UUID_RE = re.compile(
+    r"^\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
 def format_clean_markdown(title: str, body: str) -> str:
-    """Format lesson Markdown strictly with # Title and clean body (zero metadata bloat)."""
+    """Format lesson Markdown strictly with # Title and clean body (zero metadata/image bloat)."""
     clean_title = " ".join(title.strip().lstrip("#").split()) or "Untitled"
-    clean_body = re.sub(r"\n{3,}", "\n\n", body.strip())
+    stripped = _NLM_IMG_URL_RE.sub("", body)
+    stripped = _STANDALONE_UUID_RE.sub("", stripped)
+    clean_body = re.sub(r"\n{3,}", "\n\n", stripped.strip())
     return f"# {clean_title}\n\n{clean_body}\n" if clean_body else f"# {clean_title}\n"
 
 
 def extract_pdf_text(path: str | Path) -> str:
-    """Extract text from a PDF file using pypdf."""
+    """Extract text from a PDF file using pypdf (handles empty-password AES PDFs)."""
     from pypdf import PdfReader
 
-    reader = PdfReader(str(path))
-    pages = [page.extract_text() or "" for page in reader.pages]
-    return "\n\n".join(p.strip() for p in pages if p.strip())
+    try:
+        reader = PdfReader(str(path))
+        if reader.is_encrypted:
+            reader.decrypt("")
+        pages = [page.extract_text() or "" for page in reader.pages]
+        return "\n\n".join(p.strip() for p in pages if p.strip())
+    except Exception:
+        return ""
 
 
 def extract_docx_text(path: str | Path) -> str:
