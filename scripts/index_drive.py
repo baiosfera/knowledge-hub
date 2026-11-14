@@ -12,10 +12,22 @@ import httpx
 from scripts.chunker import chunk_markdown
 
 
-def index_hub(hub_root: Path, base_url: str, token: str, batch_size: int = 16) -> dict[str, Any]:
+def index_hub(
+    hub_root: Path,
+    base_url: str,
+    token: str,
+    batch_size: int = 16,
+    recreate: bool = False,
+) -> dict[str, Any]:
     manifest_path = hub_root / "06_MANIFIESTOS" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     items = manifest.get("items", {})
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    if recreate:
+        with httpx.Client(timeout=60.0) as client:
+            r = client.post(f"{base_url.rstrip('/')}/v1/recreate", headers=headers)
+            r.raise_for_status()
 
     all_chunks: list[dict[str, Any]] = []
     files_indexed = 0
@@ -68,11 +80,12 @@ def index_hub(hub_root: Path, base_url: str, token: str, batch_size: int = 16) -
             files_indexed += 1
 
     upserted = 0
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    with httpx.Client(timeout=120.0) as client:
+    with httpx.Client(timeout=180.0) as client:
         for idx in range(0, len(all_chunks), batch_size):
             batch = all_chunks[idx : idx + batch_size]
-            resp = client.post(f"{base_url.rstrip('/')}/v1/index", headers=headers, json={"chunks": batch})
+            resp = client.post(
+                f"{base_url.rstrip('/')}/v1/index", headers=headers, json={"chunks": batch}
+            )
             resp.raise_for_status()
             upserted += resp.json().get("upserted", 0)
 
@@ -82,10 +95,16 @@ def index_hub(hub_root: Path, base_url: str, token: str, batch_size: int = 16) -
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="https://knowledge-278-8000.ny1.zerops.app")
+    parser.add_argument("--recreate", action="store_true")
     args = parser.parse_args()
 
     token = os.environ.get("KNOWLEDGE_BEARER_TOKEN", "").strip()
     if not token:
         raise SystemExit("KNOWLEDGE_BEARER_TOKEN is required")
-    res = index_hub(Path("/var/www/localstorage/knowledge_hub"), args.url, token)
+    res = index_hub(
+        Path("/var/www/localstorage/knowledge_hub"),
+        args.url,
+        token,
+        recreate=args.recreate,
+    )
     print(json.dumps(res))

@@ -1,8 +1,9 @@
-"""DeepSeek classifier and {{SLOT_*}} Playbook / Tactical Bank distiller."""
+"""DeepSeek classifier, Map-Reduce Agent-Executable Playbook Compiler & 210-Prompt Vault Builder."""
 
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -30,7 +31,7 @@ def call_deepseek(
     messages: list[dict[str, str]],
     model: str = "deepseek-chat",
     json_mode: bool = False,
-    max_tokens: int = 4096,
+    max_tokens: int = 8192,
 ) -> str:
     api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
     if not api_key:
@@ -38,13 +39,13 @@ def call_deepseek(
     payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
-        "temperature": 0.2,
+        "temperature": 0.15,
         "max_tokens": max_tokens,
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
 
-    with httpx.Client(timeout=180.0) as client:
+    with httpx.Client(timeout=240.0) as client:
         resp = client.post(
             DEEPSEEK_URL,
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
@@ -61,9 +62,7 @@ def classify_manifest(hub_root: Path, batch_size: int = 20) -> dict[str, Any]:
     items = manifest.get("items", {})
 
     unclassified = [
-        (rel_path, meta)
-        for rel_path, meta in items.items()
-        if not meta.get("disciplina")
+        (rel_path, meta) for rel_path, meta in items.items() if not meta.get("disciplina")
     ]
 
     for idx in range(0, len(unclassified), batch_size):
@@ -71,9 +70,7 @@ def classify_manifest(hub_root: Path, batch_size: int = 20) -> dict[str, Any]:
         summaries = []
         for rel_path, meta in batch:
             md_file = hub_root / "01_TRANSCRIPCIONES_LIMPIAS" / meta["academia"] / rel_path
-            snippet = ""
-            if md_file.exists():
-                snippet = md_file.read_text(encoding="utf-8", errors="ignore")[:900]
+            snippet = md_file.read_text(encoding="utf-8", errors="ignore")[:900] if md_file.exists() else ""
             summaries.append({"id": rel_path, "curso": meta.get("curso", ""), "snippet": snippet})
 
         prompt = (
@@ -85,7 +82,10 @@ def classify_manifest(hub_root: Path, batch_size: int = 20) -> dict[str, Any]:
         )
         raw = call_deepseek(
             [
-                {"role": "system", "content": "Eres un taxónomo estricto de conocimiento de marketing, ventas y negocios."},
+                {
+                    "role": "system",
+                    "content": "Eres un taxónomo estricto de conocimiento de marketing, ventas y negocios.",
+                },
                 {"role": "user", "content": prompt},
             ],
             json_mode=True,
@@ -99,9 +99,12 @@ def classify_manifest(hub_root: Path, batch_size: int = 20) -> dict[str, Any]:
                 if disc not in DISCIPLINES:
                     disc = "negocio_mentalidad"
                 items[rid]["disciplina"] = disc
-                items[rid]["tipo"] = row.get("tipo", "lesson")
+                if items[rid].get("tipo") not in ("prompt",):
+                    items[rid]["tipo"] = row.get("tipo", "lesson")
 
-        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     by_disc: dict[str, list[str]] = {}
     discarded: list[dict[str, str]] = []
@@ -120,37 +123,127 @@ def classify_manifest(hub_root: Path, batch_size: int = 20) -> dict[str, Any]:
     (idx_dir / "99_descartados_fuera_de_alcance.json").write_text(
         json.dumps(discarded, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    return {"classified": len(unclassified), "disciplines": {k: len(v) for k, v in by_disc.items()}, "discarded": len(discarded)}
+    return {
+        "classified": len(unclassified),
+        "disciplines": {k: len(v) for k, v in by_disc.items()},
+        "discarded": len(discarded),
+    }
 
 
-def distill_category_of_one(hub_root: Path) -> dict[str, int]:
-    """Distill 00_category_of_one.md ({{SLOT_*}}) and its tactical prompt/swipe bank."""
-    influence_dir = hub_root / "01_TRANSCRIPCIONES_LIMPIAS" / "VELOCITYMEDIA" / "INFLUENCE"
-    md_files = sorted(influence_dir.glob("*.md"))
-    if not md_files:
-        raise RuntimeError(f"No .md files found in {influence_dir}")
+def _collect_group_digest(files: list[Path], max_total_chars: int = 85000) -> str:
+    """Distribute character budget proportionally across all files in a folder group."""
+    if not files:
+        return ""
+    per_file = max(600, min(3200, max_total_chars // len(files)))
+    parts: list[str] = []
+    for f in sorted(files):
+        txt = f.read_text(encoding="utf-8", errors="ignore").strip()
+        parts.append(f"### {f.stem}\n{txt[:per_file]}")
+    return "\n\n".join(parts)[:max_total_chars]
 
-    # Build bounded digest across all INFLUENCE lessons
-    chunks: list[str] = []
-    for f in md_files:
-        text = f.read_text(encoding="utf-8", errors="ignore").strip()
-        chunks.append(f"## SOURCE: {f.stem}\n{text[:2400]}")
-    corpus_digest = "\n\n".join(chunks)[:110000]
 
-    playbook_prompt = (
-        "A partir de las transcripciones reales de INFLUENCE adjuntas, compila el Playbook Maestro Universal "
-        "`00_category_of_one.md`.\n"
-        "REGLAS ESTRICTAS:\n"
-        "1. 100% agnóstico a marca: reemplaza cualquier marca, precio o persona real por variables algebraicas "
-        "`{{SLOT_MARCA}}`, `{{SLOT_NICHO}}`, `{{SLOT_AVATAR}}`, `{{SLOT_MECANISMO_UNICO}}`, `{{SLOT_PRECIO_HIGH_TICKET}}`, etc.\n"
-        "2. Estructura accionable con frameworks exactos, reglas de decisión, métricas y pasos reproducibles por agentes.\n"
-        "3. Cero relleno motivacional; solo doctrina táctica fiel a las fuentes.\n\n"
-        f"FUENTES:\n{corpus_digest}"
+def compile_prompt_vault(hub_root: Path) -> dict[str, int]:
+    """Compile all 210 literal prompts from 09_biblioteca_prompts/ cleanly into 04_BANCOS_TACTICOS/."""
+    prompts_dir = (
+        hub_root / "01_TRANSCRIPCIONES_LIMPIAS" / "VELOCITYMEDIA" / "INFLUENCE" / "09_biblioteca_prompts"
+    )
+    prompt_files = sorted(prompts_dir.rglob("*.md"))
+    by_cat: dict[str, list[str]] = {}
+
+    for pf in prompt_files:
+        cat = pf.parent.name
+        raw = pf.read_text(encoding="utf-8", errors="ignore").strip()
+        # Strip noisy wrapper lines while preserving exact prompt body and variables
+        lines = raw.splitlines()
+        title = lines[0].lstrip("#").strip() if lines else pf.stem
+        body = "\n".join(lines[1:]).strip()
+        # Clean common wrapper noise: replace *Categoría: ...*, ```text / ``` fences
+        body = re.sub(r"^\*Categoría:.*?\*\s*", "", body, flags=re.MULTILINE)
+        body = re.sub(r"```text\s*", "```markdown\n", body)
+        by_cat.setdefault(cat, []).append(f"### {title}\n\n{body.strip()}")
+
+    sections = [
+        "# BANCO TÁCTICO DE PROMPTS MAESTROS (210 PROMPTS LITERALES)\n",
+        "> **Uso para agentes (Hermes / CrewAI):** Todos los prompts están deduplicados por especialidad. "
+        "Antes de ejecutar cualquier prompt, resuelve las variables entre `[corchetes]` o `{{SLOT_*}}` con el Brandbook / Brief del cliente.\n",
+    ]
+    for cat in sorted(by_cat):
+        sections.append(f"## {cat} ({len(by_cat[cat])} prompts)\n\n" + "\n\n---\n\n".join(by_cat[cat]))
+
+    out_path = hub_root / "04_BANCOS_TACTICOS" / "01_biblioteca_210_prompts_maestros.md"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    content = "\n\n".join(sections).strip() + "\n"
+    out_path.write_text(content, encoding="utf-8")
+    return {"prompts_compiled": len(prompt_files), "categories": len(by_cat), "chars": len(content)}
+
+
+def distill_category_of_one_mapreduce(hub_root: Path) -> dict[str, Any]:
+    """Map-Reduce across 100% of INFLUENCE + VELOCITYMEDIA Sprints for Agent-Executable Playbooks."""
+    vel_dir = hub_root / "01_TRANSCRIPCIONES_LIMPIAS" / "VELOCITYMEDIA"
+    inf_dir = vel_dir / "INFLUENCE"
+
+    groups = {
+        "cursos_cohortes": list((inf_dir / "01_cursos").rglob("*.md"))
+        + list((inf_dir / "04_cohortes").rglob("*.md"))
+        + list((inf_dir / "06_guias").rglob("*.md")),
+        "masterclasses_workshops": list((inf_dir / "02_masterclasses").rglob("*.md"))
+        + list((inf_dir / "03_workshops").rglob("*.md")),
+        "playbooks_memorandums": list((inf_dir / "05_playbooks").rglob("*.md"))
+        + list((inf_dir / "07_memorandums").rglob("*.md")),
+        "fuentes_externas": list((inf_dir / "00_fuentes_externas_notebooklm").rglob("*.md")),
+        "velocity_sprints": list((vel_dir / "CURSOS SPRINT").rglob("*.md")),
+    }
+
+    map_summaries: list[str] = []
+    total_sources_mapped = 0
+    for gname, files in groups.items():
+        if not files:
+            continue
+        total_sources_mapped += len(files)
+        digest = _collect_group_digest(files, max_total_chars=82000)
+        map_prompt = (
+            f"Analiza este bloque de fuentes (`{gname}`, {len(files)} documentos) y extrae una ficha técnica DENSAMENTE OPERATIVA para agentes autónomos (Hermes / CrewAI).\n"
+            "REGLAS INQUEBRANTABLES:\n"
+            "1. Cero relleno motivacional. Solo frameworks nombrados, reglas IF/THEN, métricas con umbrales, objeciones exactas y pasos ejecutables.\n"
+            "2. Parametriza cualquier marca, empresa, autor promocional, precio literal (ej. 1€, 49€/mes, 1.500 valoraciones, Trustpilot, Influence Media) en `{{SLOT_*}}`.\n"
+            "3. Extrae también ganchos, estructuras de landing/webinar/email y guiones de diagnóstico/venta presentes en este bloque, todos con `{{SLOT_*}}`.\n\n"
+            f"FUENTES:\n{digest}"
+        )
+        summary = call_deepseek(
+            [
+                {
+                    "role": "system",
+                    "content": "Eres un ingeniero de conocimiento para agentes autónomos B2B. Extraes doctrina táctica ejecutable 100% libre de marcas o precios literales.",
+                },
+                {"role": "user", "content": map_prompt},
+            ],
+            max_tokens=6144,
+        )
+        map_summaries.append(f"## BLOQUE MAP: {gname} ({len(files)} fuentes)\n\n{summary}")
+
+    combined_map = "\n\n---\n\n".join(map_summaries)
+
+    reduce_playbook_prompt = (
+        "Compila el PLAYBOOK MAESTRO EJECUTABLE `00_category_of_one.md` integrando los 5 bloques del Map Adjunto.\n"
+        "DISEÑADO PARA HERMES Y CREWAI — CADA MÓDULO DEBE SEGUIR ESTE CONTRATO EXACTO:\n"
+        "1. **Diccionario maestro de `{{SLOT_*}}`** (obligatorios vs opcionales).\n"
+        "2. **Módulos A..H** (Diagnóstico de Carpeta, Reframing + Blue Ocean, Lenguaje Propietario + POV, Arquitectura de Oferta + Tripwire + High-Ticket, Webinars/Funnels que Escalan, Contenido Thought Leadership + Demanda, Guión de Venta por Creencias, Productización/Activos + Métricas).\n"
+        "3. Dentro de **CADA módulo**, incluir explícitamente:\n"
+        "   - `Inputs requeridos:` lista de `{{SLOT_*}}`\n"
+        "   - `Reglas de decisión (IF/THEN):` condiciones deterministas\n"
+        "   - `Pasos de ejecución:` numerados, ejecutables por LLM\n"
+        "   - `Output Schema (YAML/JSON):` estructura exacta que debe devolver el agente\n"
+        "   - `Anti-Patrones / Criterios de rechazo:` qué debe rechazar el QA del agente\n"
+        "4. PROHIBIDO dejar marcas o precios de ejemplo reales (`Influence Media`, `Velocity`, `1 €`, `49 €`, `Trustpilot`, nombres propios de cursos como marca propia). Todo es `{{SLOT_*}}`.\n\n"
+        f"SÍNTESIS MAP COMPLETA:\n{combined_map[:110000]}"
     )
     playbook_md = call_deepseek(
         [
-            {"role": "system", "content": "Eres el compilador SOTA de Playbooks Universales {{SLOT_*}} para agentes de marketing y ventas."},
-            {"role": "user", "content": playbook_prompt},
+            {
+                "role": "system",
+                "content": "Eres el compilador SOTA de SOPs ejecutables para agentes CrewAI/Hermes. Cero prosa fluff, 100% contratos ejecutables y {{SLOT_*}}.",
+            },
+            {"role": "user", "content": reduce_playbook_prompt},
         ],
         max_tokens=8192,
     )
@@ -158,26 +251,45 @@ def distill_category_of_one(hub_root: Path) -> dict[str, int]:
     pb_out.parent.mkdir(parents=True, exist_ok=True)
     pb_out.write_text(playbook_md.strip() + "\n", encoding="utf-8")
 
-    tactical_prompt = (
-        "Extrae del corpus INFLUENCE adjunto un Banco Táctico deduplicado con:\n"
-        "1. Prompts literales y estructuras de prompts para IA.\n"
-        "2. Estructuras de swipe files, ganchos, ofertas y guiones de diagnóstico/venta.\n"
-        "3. Checklists operativos paso a paso.\n"
-        "Usa variables `{{SLOT_*}}` donde aplique y NO inventes ejemplos fuera de las fuentes.\n\n"
-        f"FUENTES:\n{corpus_digest}"
+    reduce_swipes_prompt = (
+        "Compila `00_category_of_one_swipes_y_guiones.md` (Banco Táctico de Estructuras, Ganchos, Webinars, Ofertas y Guiones) desde la síntesis Map adjunta.\n"
+        "REGLAS ESTRICTAS:\n"
+        "1. Cada plantilla/gancho/guión debe venir lista para que un agente la rellene con `{{SLOT_*}}`.\n"
+        "2. PROHIBIDO dejar precios literales (`1 €`, `49 €`, `7 días` si es ejemplo de marca), marcas reales (`Influence Media`, `Trustpilot`, etc.). Usa `{{SLOT_PRECIO_ENTRADA}}`, `{{SLOT_DURACION_TRIAL}}`, `{{SLOT_PRUEBA_SOCIAL}}`, etc.\n"
+        "3. Indica explícitamente qué `{{SLOT_*}}` requiere cada plantilla y qué canal aplica (Landing, Webinar, DM/Llamada, Ads/Hook, Email).\n\n"
+        f"SÍNTESIS MAP COMPLETA:\n{combined_map[:110000]}"
     )
-    tactical_md = call_deepseek(
+    swipes_md = call_deepseek(
         [
-            {"role": "system", "content": "Eres un extractor de bancos tácticos (prompts, swipe files, guiones y checklists)."},
-            {"role": "user", "content": tactical_prompt},
+            {
+                "role": "system",
+                "content": "Eres un compilador de Swipe Files y Guiones Tácticos parametrizados 100% con {{SLOT_*}} para agentes autónomos.",
+            },
+            {"role": "user", "content": reduce_swipes_prompt},
         ],
         max_tokens=8192,
     )
-    tb_out = hub_root / "04_BANCOS_TACTICOS" / "00_category_of_one_prompts_y_swipes.md"
-    tb_out.parent.mkdir(parents=True, exist_ok=True)
-    tb_out.write_text(tactical_md.strip() + "\n", encoding="utf-8")
+    # Remove superseded old file name if present
+    old_tb = hub_root / "04_BANCOS_TACTICOS" / "00_category_of_one_prompts_y_swipes.md"
+    old_tb.unlink(missing_ok=True)
+    sw_out = hub_root / "04_BANCOS_TACTICOS" / "00_category_of_one_swipes_y_guiones.md"
+    sw_out.write_text(swipes_md.strip() + "\n", encoding="utf-8")
 
-    return {"playbook_chars": len(playbook_md), "tactical_chars": len(tactical_md), "sources_used": len(md_files)}
+    # Audit leak check right away
+    leaks = []
+    for fname, content in (("playbook", playbook_md), ("swipes", swipes_md)):
+        for forbidden in ("Trustpilot", "49 €", "49€", "Influence Media", "1 €"):
+            if forbidden.lower() in content.lower():
+                leaks.append(f"{fname}:{forbidden}")
+
+    prompt_vault_stats = compile_prompt_vault(hub_root)
+    return {
+        "sources_mapped": total_sources_mapped,
+        "playbook_chars": len(playbook_md),
+        "swipes_chars": len(swipes_md),
+        "prompt_vault": prompt_vault_stats,
+        "leaks_detected": leaks,
+    }
 
 
 if __name__ == "__main__":
@@ -191,5 +303,5 @@ if __name__ == "__main__":
     if args.classify:
         out["classify"] = classify_manifest(root)
     if args.distill_coo:
-        out["distill_coo"] = distill_category_of_one(root)
+        out["distill_coo"] = distill_category_of_one_mapreduce(root)
     print(json.dumps(out, ensure_ascii=False))

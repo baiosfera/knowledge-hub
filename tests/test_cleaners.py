@@ -1,7 +1,7 @@
-"""Unit tests for deterministic cleaners and Markdown chunker."""
+"""Unit tests for deterministic cleaners and word-safe Markdown chunker."""
 
 from scripts.chunker import chunk_markdown
-from scripts.cleaners import clean_webvtt_text, format_clean_markdown
+from scripts.cleaners import clean_webvtt_text, format_clean_markdown, is_meaningful_doc
 
 
 def test_clean_webvtt_strips_headers_tags_and_rolling_duplicates():
@@ -22,33 +22,51 @@ Hoy veremos posicionamiento
     assert cleaned == "Hola emprendedores bienvenidos al curso\nHoy veremos posicionamiento"
 
 
-def test_format_clean_markdown_zero_metadata_bloat():
+def test_format_clean_markdown_strips_fonts_spaced_caps_double_h1_and_watermarks():
     body = (
+        "# Combinar dos competencias clave\n\n"
+        "I N F L U E N C E\n\n"
+        "Poppins-Light\n\n"
+        "NHaasGroteskDSW01-45Lt\n\n"
         "Primer párrafo.\n\n"
         "https://lh3.googleusercontent.com/notebooklm/ABzcPv3kuz=w70-h60-v0\n\n\n"
         "Segundo párrafo.\n\n"
         "8a887473-a2f6-40ea-8085-73f2a2b47db4"
     )
-    md = format_clean_markdown("  # Clase 1: Fundamentos  ", body)
-    assert md == "# Clase 1: Fundamentos\n\nPrimer párrafo.\n\nSegundo párrafo.\n"
+    md = format_clean_markdown("015_slug_feo", body)
+    assert md == (
+        "# Combinar dos competencias clave\n\n"
+        "INFLUENCE\n\n"
+        "Primer párrafo.\n\n"
+        "Segundo párrafo.\n"
+    )
 
 
-def test_chunk_markdown_splits_and_attaches_payload_fields():
-    body = ("Párrafo de prueba número uno. " * 25) + "\n\n" + ("Párrafo de prueba número dos. " * 25)
+def test_is_meaningful_doc_filters_tiny_stubs():
+    assert not is_meaningful_doc("# Title\n\nTiny stub\n")
+    assert is_meaningful_doc("# Title\n\n" + ("Contenido sustancial. " * 25))
+
+
+def test_chunk_markdown_respects_word_boundaries_and_adds_context_header():
+    long_para = " ".join(f"palabra{i}" for i in range(180))
+    body = f"## Módulo A\n\n{long_para}"
     chunks = chunk_markdown(
-        title="Lección 1",
+        title="Category of One",
         body=body,
-        max_chars=500,
+        max_chars=450,
         overlap=80,
         academia="VELOCITYMEDIA",
         curso="INFLUENCE",
         disciplina="posicionamiento",
-        tipo="lesson",
-        path="01_TRANSCRIPCIONES_LIMPIAS/VELOCITYMEDIA/INFLUENCE/01.md",
+        tipo="playbook",
+        path="03_PLAYBOOKS_MAESTROS/00_category_of_one.md",
         source_sha256="abc123",
     )
     assert len(chunks) >= 2
-    assert chunks[0]["chunk_index"] == 0
-    assert chunks[1]["chunk_index"] == 1
-    assert chunks[0]["academia"] == "VELOCITYMEDIA"
-    assert chunks[0]["disciplina"] == "posicionamiento"
+    for idx, ch in enumerate(chunks):
+        assert ch["chunk_index"] == idx
+        assert ch["text"].startswith("[Category of One > Módulo A]\n")
+        content_after_hdr = ch["text"].split("\n", 1)[1]
+        # Ensure first token after header is a whole word (starts with 'palabra' or '##')
+        first_word = content_after_hdr.split()[0]
+        assert first_word.startswith("palabra") or first_word.startswith("##")
