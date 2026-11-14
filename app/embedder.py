@@ -27,6 +27,7 @@ class LazyEmbedder:
                     self._model = TextEmbedding(
                         model_name=self.model_name,
                         cache_dir=self.cache_dir,
+                        threads=1,
                     )
         return self._model
 

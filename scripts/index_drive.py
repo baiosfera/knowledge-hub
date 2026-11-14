@@ -12,7 +12,7 @@ import httpx
 from scripts.chunker import chunk_markdown
 
 
-def index_hub(hub_root: Path, base_url: str, token: str, batch_size: int = 64) -> dict[str, Any]:
+def index_hub(hub_root: Path, base_url: str, token: str, batch_size: int = 16) -> dict[str, Any]:
     manifest_path = hub_root / "06_MANIFIESTOS" / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     items = manifest.get("items", {})
